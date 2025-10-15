@@ -51,6 +51,14 @@ export default function EventDetail() {
 
   const { upsert, syncing, error: syncError } = useSheetSync();
 
+  // Derive a short room number from the registration code (first 6 alphanumeric chars)
+  const computeRoom = (code?: string) => {
+    if (!code) return null;
+    const alnum = (code.match(/[a-zA-Z0-9]/g) || []).join('');
+    return alnum.slice(0, 6);
+  };
+  const roomNumber = computeRoom(existingRegistration?.reg_code || regCode || '');
+
   // Save form data to local storage whenever it changes
   useEffect(() => {
     if (formData.teamName || formData.collegeName || formData.teamMembers.some((m: string) => m)) {
@@ -202,9 +210,10 @@ export default function EventDetail() {
       });
       if (urlError) throw urlError;
 
-      // Copy attendance URL to clipboard
-      await navigator.clipboard.writeText(urlData);
-      alert('Attendance URL copied to clipboard!');
+  // Don't copy the attendance URL to the clipboard automatically.
+  // Log it so callers can see the generated URL (or handle UI copy elsewhere).
+  // eslint-disable-next-line no-console
+  console.log('Team attendance URL:', urlData);
 
       // Ensure reg_code persisted in DB and then trigger sheet upsert
       const { data: regData } = await supabase
@@ -269,7 +278,9 @@ export default function EventDetail() {
         <div className="text-center">
           <Loader2 className="w-12 h-12 text-red-600 animate-spin mx-auto mb-4" />
           <div className="text-red-600 text-xl">Loading registration data...</div>
-          {regCode && <div className="text-gray-400 mt-2">Registration Code: {regCode}</div>}
+          {roomNumber && (
+            <div className="text-gray-400 mt-2">Room: <span className="font-mono ml-2 text-white">{roomNumber}</span></div>
+          )}
         </div>
       </div>
     );
@@ -311,7 +322,12 @@ export default function EventDetail() {
             <ArrowLeft className="w-5 h-5 mr-2" />
             Back to Events
           </button>
-          <h1 className="text-4xl font-bold text-white">{event.name}</h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-4xl font-bold text-white">{event.name}</h1>
+            {roomNumber && (
+              <div className="ml-2 px-2 py-1 bg-red-700 text-white rounded-md text-sm font-mono">Room {roomNumber}</div>
+            )}
+          </div>
           <p className="text-gray-300 mt-2">{event.description}</p>
             <div className="mt-2 text-sm text-gray-400">
               Max Team Size: <span className="font-bold text-white">{event.max_team_size}</span>
