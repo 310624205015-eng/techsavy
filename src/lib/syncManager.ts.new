@@ -1,0 +1,492 @@
+import { supabase } from './supabase';import { supabase } from './supabase';import { supabase } from './supabase';
+
+
+
+type SheetResponse = {import { findRowInSheet, updateRegistrationInSheet, appendRegistration } from '../utils/sheets';
+
+  status: number;
+
+  error?: string;type SheetResponse = {
+
+  spreadsheetId?: string;
+
+  rowNumber?: number;export class SyncManager {  status: number;
+
+  reg_code?: string;
+
+  success?: boolean;  private static instance: SyncManager;  error?: string;
+
+  tabName?: string;
+
+  updated?: boolean;  private inProgress = new Map<string, boolean>();  spreadsheetId?: string;
+
+};
+
+  success?: boolean;
+
+export class SyncManager {
+
+  private static instance: SyncManager | null = null;  private constructor() {}  rowNumber?: number;
+
+  private inProgress = new Map<string, boolean>();
+
+  reg_code?: string;
+
+  private constructor() {
+
+    // Set up database subscription for real-time sync  public static getInstance(): SyncManager {};
+
+    this.setupSubscriptions();
+
+  }    if (!SyncManager.instance) SyncManager.instance = new SyncManager();
+
+
+
+  private async setupSubscriptions() {    return SyncManager.instance;export class SyncManager {
+
+    // Listen for event changes
+
+    supabase  }  private static instance: SyncManager | null = null;
+
+      .channel('events-changes')
+
+      .on(  private inProgress = new Map<string, boolean>();
+
+        'postgres_changes',
+
+        { event: '*', schema: 'public', table: 'events' },  private key(prefix: string, id?: string) {
+
+        async (payload) => {
+
+          if (payload.eventType === 'INSERT') {    return `${prefix}:${id || 'global'}`;  private constructor() {}
+
+            await this.ensureEventSpreadsheet(payload.new.id);
+
+          }  }
+
+        }
+
+      )  public static getInstance(): SyncManager {
+
+      .subscribe();
+
+  public async ensureEventSpreadsheet(eventId: string) {    if (!SyncManager.instance) {
+
+    // Listen for problem statement changes
+
+    supabase    const k = this.key('ensureEvent', eventId);      SyncManager.instance = new SyncManager();
+
+      .channel('problems-changes')
+
+      .on(    if (this.inProgress.get(k)) return;    }
+
+        'postgres_changes',
+
+        { event: '*', schema: 'public', table: 'problem_statements' },    this.inProgress.set(k, true);    return SyncManager.instance;
+
+        async (payload) => {
+
+          if (payload.eventType === 'INSERT') {  }
+
+            await this.ensureProblemTab(payload.new.event_id, payload.new.id);
+
+          }    try {
+
+        }
+
+      )      const { data: event, error } = await supabase  private key(prefix: string, id?: string): string {
+
+      .subscribe();
+
+        .from('events')    return `${prefix}:${id || 'global'}`;
+
+    // Listen for registration changes
+
+    supabase        .select('id, name, sheet_id')  }
+
+      .channel('registrations-changes')
+
+      .on(        .eq('id', eventId)
+
+        'postgres_changes',
+
+        { event: '*', schema: 'public', table: 'registrations' },        .single();  private async postToSheet(action: string, data: any): Promise<SheetResponse> {
+
+        async (payload) => {
+
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {      if (error) throw error;    const proxyPath = '/api/sheets';
+
+            await this.bulkSyncForEvent(payload.new.event_id);
+
+          }      if (!event) throw new Error('Event not found');    const res = await fetch(proxyPath, {
+
+        }
+
+      )      method: 'POST',
+
+      .subscribe();
+
+  }      if (!event.sheet_id) {      headers: { 'Content-Type': 'application/json' },
+
+
+
+  public static getInstance(): SyncManager {        const res = await createSpreadsheet(event.name || `Event-${event.id}`);      body: JSON.stringify({ action, ...data }),
+
+    if (!SyncManager.instance) {
+
+      SyncManager.instance = new SyncManager();        if (!res?.spreadsheetId) throw new Error('Failed to create spreadsheet');    });
+
+    }
+
+    return SyncManager.instance;        await supabase
+
+  }
+
+          .from('events')    const response = await res.json();
+
+  private key(prefix: string, id?: string): string {
+
+    return `${prefix}:${id || 'global'}`;          .update({ sheet_id: res.spreadsheetId })    if (!res.ok || response.status >= 400) {
+
+  }
+
+          .eq('id', eventId);      throw new Error(response.error || 'Failed to sync with sheet');
+
+  private async postToSheet(action: string, data: any): Promise<SheetResponse> {
+
+    const url = import.meta.env.VITE_APPS_SCRIPT_URL;      }    }
+
+    if (!url) throw new Error('Apps Script URL not configured');
+
+    } finally {    return response;
+
+    const res = await fetch(url, {
+
+      method: 'POST',      this.inProgress.delete(k);  }
+
+      headers: { 'Content-Type': 'application/json' },
+
+      body: JSON.stringify({ action, ...data }),    }
+
+    });
+
+  }  public async ensureEventSpreadsheet(eventId: string): Promise<string> {
+
+    const response = await res.json();
+
+    if (!res.ok || response.status >= 400) {    const k = this.key('ensureEvent', eventId);
+
+      throw new Error(response.error || 'Failed to sync with sheet');
+
+    }  public async updateRegistrationByCode(eventId: string, reg_code: string, updateData: any) {    if (this.inProgress.get(k)) {
+
+    return response;
+
+  }    const k = this.key('updateReg', reg_code);      throw new Error('Event sync already in progress');
+
+
+
+  /**    if (this.inProgress.get(k)) {    }
+
+   * Ensures that an event has a spreadsheet created
+
+   * Returns the spreadsheet ID      throw new Error('Update already in progress');    this.inProgress.set(k, true);
+
+   */
+
+  public async ensureEventSpreadsheet(eventId: string): Promise<string> {    }
+
+    const k = this.key('ensureEvent', eventId);
+
+    if (this.inProgress.get(k)) {    this.inProgress.set(k, true);    try {
+
+      throw new Error('Event sync already in progress');
+
+    }      // Get event details
+
+    this.inProgress.set(k, true);
+
+    try {      const { data: event, error } = await supabase
+
+    try {
+
+      const res = await this.postToSheet('syncEvent', { eventId });      // Get event and problem statement info        .from('events')
+
+      
+
+      if (!res.spreadsheetId) {      const { data: event } = await supabase        .select('id, name, sheet_id')
+
+        throw new Error('Failed to create or get spreadsheet');
+
+      }        .from('events')        .eq('id', eventId)
+
+
+
+      return res.spreadsheetId;        .select('id, name, sheet_id')        .single();
+
+    } finally {
+
+      this.inProgress.delete(k);        .eq('id', eventId)
+
+    }
+
+  }        .single();      if (error) throw error;
+
+
+
+  /**      if (!event) throw new Error('Event not found');
+
+   * Creates or updates a problem statement tab in the event's spreadsheet
+
+   */      if (!event?.sheet_id) {
+
+  public async ensureProblemTab(eventId: string, problemId: string): Promise<void> {
+
+    const k = this.key('ensureProblem', `${eventId}-${problemId}`);        throw new Error('Event spreadsheet not found');      // If sheet_id exists, return it
+
+    if (this.inProgress.get(k)) {
+
+      throw new Error('Problem tab sync already in progress');      }      if (event.sheet_id) return event.sheet_id;
+
+    }
+
+    this.inProgress.set(k, true);
+
+
+
+    try {      // Find the registration in sheets first      // Create new spreadsheet
+
+      await this.postToSheet('syncProblem', { eventId, problemId });
+
+    } finally {      const result = await findRowInSheet(event.sheet_id, 'Sheet1', 'reg_code', reg_code);      const res = await this.postToSheet('createEvent', {
+
+      this.inProgress.delete(k);
+
+    }      if (!result?.found) {        eventName: event.name || `Event-${event.id}`
+
+  }
+
+        throw new Error('Registration not found in sheet');      });
+
+  /**
+
+   * Updates a single registration and triggers a full sync of the event      }
+
+   */
+
+  public async upsertRegistration(registrationId: string): Promise<void> {      if (!res.spreadsheetId) throw new Error('Failed to create spreadsheet');
+
+    const k = this.key('upsertReg', registrationId);
+
+    if (this.inProgress.get(k)) {      // Update the registration in database
+
+      throw new Error('Registration sync already in progress');
+
+    }      const { error: dbError } = await supabase      // Update event with sheet_id
+
+    this.inProgress.set(k, true);
+
+        .from('registrations')      const { error: updateError } = await supabase
+
+    try {
+
+      // First fetch registration to get event_id        .update({        .from('events')
+
+      const { data: reg, error } = await supabase
+
+        .from('registrations')          ...updateData,        .update({ sheet_id: res.spreadsheetId })
+
+        .select('id, event_id')
+
+        .eq('id', registrationId)          updated_at: new Date().toISOString()        .eq('id', eventId);
+
+        .single();
+
+        })
+
+      if (error || !reg) throw error || new Error('Registration not found');
+
+        .eq('reg_code', reg_code);      if (updateError) throw updateError;
+
+      // Sync registration which will ensure event and problem synced too
+
+      await this.postToSheet('syncRegistration', { registrationId });
+
+
+
+      // Do a full sync for the event to ensure consistency      if (dbError) throw dbError;      return res.spreadsheetId;
+
+      await this.bulkSyncForEvent(reg.event_id);
+
+    } finally {    } finally {
+
+      this.inProgress.delete(k);
+
+    }      // Update the registration in sheet      this.inProgress.delete(k);
+
+  }
+
+      await updateRegistrationInSheet(    }
+
+  /**
+
+   * Updates a registration by code and triggers a full sync        event.sheet_id,  }
+
+   */
+
+  public async updateRegistrationByCode(eventId: string, regCode: string, updates: any): Promise<void> {        'Sheet1',
+
+    const k = this.key('updateByCode', regCode);
+
+    if (this.inProgress.get(k)) {        {  public async ensureProblemTab(eventId: string, problemId: string): Promise<void> {
+
+      throw new Error('Registration update already in progress');
+
+    }          ...updateData,    const k = this.key('ensureTab', `${eventId}:${problemId}`);
+
+    this.inProgress.set(k, true);
+
+          reg_code,    if (this.inProgress.get(k)) return;
+
+    try {
+
+      // First update in database          updated_at: new Date().toISOString()    this.inProgress.set(k, true);
+
+      const { data: reg, error } = await supabase
+
+        .from('registrations')        }
+
+        .update(updates)
+
+        .eq('reg_code', regCode)      );    try {
+
+        .eq('event_id', eventId)
+
+        .select()      // Get event and problem details
+
+        .single();
+
+      return true;      const [eventResult, problemResult] = await Promise.all([
+
+      if (error || !reg) throw error || new Error('Failed to update registration');
+
+    } finally {        supabase.from('events').select('id, name, sheet_id').eq('id', eventId).single(),
+
+      // Then trigger a full sync
+
+      await this.bulkSyncForEvent(eventId);      this.inProgress.delete(k);        supabase.from('problem_statements').select('id, title').eq('id', problemId).single()
+
+    } finally {
+
+      this.inProgress.delete(k);    }      ]);
+
+    }
+
+  }  }
+
+
+
+  /**      if (eventResult.error) throw eventResult.error;
+
+   * Does a complete sync of an event's registrations
+
+   */  // Rest of your existing methods...      if (problemResult.error) throw problemResult.error;
+
+  public async bulkSyncForEvent(eventId: string): Promise<void> {
+
+    const k = this.key('bulkSync', eventId);}
+
+    if (this.inProgress.get(k)) {
+
+      throw new Error('Bulk sync already in progress');      const event = eventResult.data;
+
+    }
+
+    this.inProgress.set(k, true);export const syncManager = SyncManager.getInstance();      const problem = problemResult.data;
+
+
+
+    try {      if (!event) throw new Error('Event not found');
+
+      await this.postToSheet('syncAllRegistrations', { eventId });      if (!problem) throw new Error('Problem not found');
+
+    } finally {
+
+      this.inProgress.delete(k);      // Ensure spreadsheet exists
+
+    }      const sheetId = await this.ensureEventSpreadsheet(eventId);
+
+  }
+
+}      // Create tab if needed
+
+      const tabName = problem.title || `Problem-${problem.id}`;
+
+export const syncManager = SyncManager.getInstance();      await this.postToSheet('createTab', {
+        spreadsheetId: sheetId,
+        tabName
+      });
+    } finally {
+      this.inProgress.delete(k);
+    }
+  }
+
+  public async appendRegistration(registrationId: string): Promise<void> {
+    const k = this.key('appendReg', registrationId);
+    if (this.inProgress.get(k)) {
+      throw new Error('Sync already in progress for this registration');
+    }
+    this.inProgress.set(k, true);
+
+    try {
+      const { data: reg, error } = await supabase
+        .from('registrations')
+        .select(`
+          *,
+          events:event_id (id, name, sheet_id),
+          problem_statements:problem_statement_id (id, title)
+        `)
+        .eq('id', registrationId)
+        .single();
+
+      if (error) throw error;
+      if (!reg) throw new Error('Registration not found');
+
+      // Ensure we have the event spreadsheet
+      await this.ensureEventSpreadsheet(reg.event_id);
+
+      // Get the updated event with sheet_id
+      const { data: event } = await supabase
+        .from('events')
+        .select('id, name, sheet_id')
+        .eq('id', reg.event_id)
+        .single();
+
+      // Ensure the problem statement tab exists
+      await this.ensureProblemTab(reg.event_id, reg.problem_statement_id);
+
+      // Format registration data for the sheet
+      const registrationData = {
+        team_name: reg.team_name,
+        email: reg.email,
+        college_name: reg.college_name,
+        contact_number: reg.contact_number,
+        team_size: reg.team_size,
+        is_locked: reg.is_locked || false,
+        created_at: reg.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      // Append to sheet
+      await appendRegistration(
+        event.sheet_id,
+        tabName,
+        registrationData
+      );
+    } finally {
+      this.inProgress.delete(k);
+    }
+  }
+}
+
+export const syncManager = SyncManager.getInstance();

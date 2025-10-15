@@ -1,0 +1,285 @@
+import { supabase } from './supabase';
+import {
+  createSpreadsheet,
+  createTab,
+  appendRegistration,
+  updateRegistrationInSheet,
+  findRowInSheet,
+  bulkSync as clientBulkSync,
+} from '../utils/sheets';
+
+interface RegistrationData {
+  team_name: string;
+  email: string;
+  college_name: string;
+  contact_number: string;
+  team_size: number;
+  is_locked?: boolean;
+  reg_code?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+async function postToAppsScript(body: any) {
+  const url = import.meta.env.VITE_APPS_SCRIPT_URL;
+  if (!url) throw new Error('Apps Script URL not configured');
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || 'Failed to sync with sheet');
+  }
+
+  return res.json();
+}
+
+class SyncManager {
+  private static instance: SyncManager;
+  private inProgress = new Map<string, boolean>();
+
+  private constructor() {}
+
+  public static getInstance(): SyncManager {
+    if (!SyncManager.instance) {
+      SyncManager.instance = new SyncManager();
+    }
+    return SyncManager.instance;
+  }
+
+  private key(prefix: string, id?: string) {
+    return `${prefix}:${id || 'global'}`;
+  }
+
+  public async ensureEventSpreadsheet(eventId: string): Promise<string> {
+    const k = this.key('ensureEvent', eventId);
+    if (this.inProgress.get(k)) {
+      throw new Error('Event sync already in progress');
+    }
+    this.inProgress.set(k, true);
+
+    try {
+      const res = await postToAppsScript({
+        action: 'syncEvent',
+        eventId
+      });
+
+      if (!res.spreadsheetId) {
+        throw new Error('Failed to create or get spreadsheet');
+      }
+
+      return res.spreadsheetId;
+
+  // Ensure a tab exists for a problem statement on the event spreadsheet
+  public async ensureProblemTab(eventId: string, problemStatementId: string) {
+    const k = this.key('ensureTab', `${eventId}:${problemStatementId}`);
+    if (this.inProgress.get(k)) return;
+    this.inProgress.set(k, true);
+
+    try {
+      const [{ data: event, error: e1 }, { data: problem, error: e2 }] = await Promise.all([
+        supabase.from('events').select('id, name, sheet_id').eq('id', eventId).single(),
+        // Do not select or update `sheet_tab_name` here because some schemas
+        // may not have that column. Keep problem statement operations limited
+        // to id and title and avoid attempting to persist sheet tab name.
+        supabase.from('problem_statements').select('id, title').eq('id', problemStatementId).single(),
+      ]);
+      if (e1) throw e1;
+      if (e2) throw e2;
+      if (!event) throw new Error('Event not found');
+      if (!problem) throw new Error('Problem statement not found');
+
+      if (!event.sheet_id) {
+        // create spreadsheet and persist
+        const res = await createSpreadsheet(event.name || `Event-${event.id}`);
+        if (!res || !res.spreadsheetId) throw new Error('Failed to create spreadsheet');
+        await supabase.from('events').update({ sheet_id: res.spreadsheetId }).eq('id', eventId);
+        event.sheet_id = res.spreadsheetId;
+      }
+
+      const tabName = problem.title || `Problem-${problem.id}`;
+      // create tab (Apps Script ensures idempotency)
+      await createTab(event.sheet_id, tabName);
+      // Note: Do not attempt to persist a `sheet_tab_name` column here because
+      // the database schema in some deployments doesn't include it. If you do
+      // have that column and want it updated, add a separate migration and
+      // re-enable persistence here.
+    } finally {
+      this.inProgress.delete(k);
+    }
+  }
+
+  public async upsertRegistration(registrationId: string) {
+    const k = this.key('upsertReg', registrationId);
+    if (this.inProgress.get(k)) return;
+    this.inProgress.set(k, true);
+
+    try {
+      // fetch registration with related event and problem
+      const { data: reg, error } = await supabase
+        .from('registrations')
+        .select('*, event_id, problem_statement_id')
+        .eq('id', registrationId)
+        .single();
+      if (error || !reg) throw error || new Error('Registration not found');
+
+      // fetch event and problem statement
+      const [{ data: event }, { data: problem }] = await Promise.all([
+        supabase.from('events').select('id, name, sheet_id').eq('id', reg.event_id).single(),
+        supabase.from('problem_statements').select('id, title').eq('id', reg.problem_statement_id).single(),
+      ]);
+      if (!event?.sheet_id) throw new Error('Event spreadsheet not found');
+      if (!problem) throw new Error('Problem statement not found');
+
+      // Generate reg_code if not exists
+      if (!reg.reg_code) {
+        const reg_code = `REG-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`.toUpperCase();
+        await supabase
+          .from('registrations')
+          .update({ reg_code })
+          .eq('id', registrationId);
+        reg.reg_code = reg_code;
+      }
+
+      const tabName = problem.title || `Problem-${problem.id}`;
+      const registrationData = {
+        reg_code: reg.reg_code,
+        team_name: reg.team_name,
+        email: reg.email,
+        college_name: reg.college_name,
+        contact_number: reg.contact_number,
+        team_size: reg.team_size,
+        is_locked: reg.is_locked || false,
+        created_at: reg.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      // Check if registration already exists in sheet
+      const existing = await findRowInSheet(event.sheet_id, tabName, 'reg_code', reg.reg_code);
+      
+      if (existing?.found) {
+        // Update existing registration
+        await updateRegistrationInSheet(
+          event.sheet_id,
+          tabName,
+          registrationData
+        );
+      } else {
+        // Append new registration
+        await appendRegistration(
+          event.sheet_id,
+          tabName,
+          registrationData
+        );
+      }
+    } finally {
+      this.inProgress.delete(k);
+    }
+  }
+
+  public async updateRegistrationByCode(eventId: string, regCode: string, updates: Partial<RegistrationData>) {
+    const k = this.key('updateByCode', regCode);
+    if (this.inProgress.get(k)) return;
+    this.inProgress.set(k, true);
+
+    try {
+      // Get event info
+      const { data: event } = await supabase
+        .from('events')
+        .select('id, name, sheet_id')
+        .eq('id', eventId)
+        .single();
+
+      if (!event?.sheet_id) throw new Error('Event spreadsheet not found');
+
+      // Find registration by code
+      const { data: reg } = await supabase
+        .from('registrations')
+        .select('*')
+        .eq('reg_code', regCode)
+        .single();
+
+      if (!reg) throw new Error('Registration not found');
+
+      // Update in database
+      const { error: updateError } = await supabase
+        .from('registrations')
+        .update({
+          ...updates,
+          updated_at: new Date().toISOString()
+        })
+        .eq('reg_code', regCode);
+
+      if (updateError) throw updateError;
+
+      // Get problem statement for tab name
+      const { data: problem } = await supabase
+        .from('problem_statements')
+        .select('title')
+        .eq('id', reg.problem_statement_id)
+        .single();
+
+      const tabName = problem?.title || 'Sheet1';
+
+      // Update in sheet
+      await updateRegistrationInSheet(
+        event.sheet_id,
+        tabName,
+        {
+          ...reg,
+          ...updates,
+          reg_code: regCode,
+          updated_at: new Date().toISOString()
+        }
+      );
+    } finally {
+      this.inProgress.delete(k);
+    }
+  }
+
+  public async bulkSyncForEvent(eventId: string) {
+    const k = this.key('bulkSync', eventId);
+    if (this.inProgress.get(k)) return;
+    this.inProgress.set(k, true);
+
+    try {
+      // Fetch event with related problem statements and registrations
+      const [{ data: event, error: e1 }, { data: problems, error: e2 }, { data: registrations, error: e3 }] = await Promise.all([
+        supabase.from('events').select('id, name, sheet_id').eq('id', eventId).maybeSingle(),
+        supabase.from('problem_statements').select('id, title').eq('event_id', eventId),
+        supabase.from('registrations').select('*').eq('event_id', eventId)
+      ]);
+      if (e1) throw e1;
+      if (e2) throw e2;
+      if (e3) throw e3;
+
+      const ev = event;
+      if (!ev) throw new Error('Event not found for bulk sync');
+
+      // If no sheet_id, create one
+      if (!ev.sheet_id) {
+        const res = await createSpreadsheet(ev.name || `Event-${ev.id}`);
+        if (!res || !res.spreadsheetId) throw new Error('Failed to create spreadsheet');
+        await supabase.from('events').update({ sheet_id: res.spreadsheetId }).eq('id', ev.id);
+        ev.sheet_id = res.spreadsheetId;
+      }
+
+      // call client bulk sync
+      await clientBulkSync([{
+        id: ev.id,
+        name: ev.name,
+        sheet_id: ev.sheet_id,
+        problem_statements: problems || [],
+        registrations: registrations || [],
+      }]);
+    } finally {
+      this.inProgress.delete(k);
+    }
+  }
+}
+
+export const syncManager = SyncManager.getInstance();
