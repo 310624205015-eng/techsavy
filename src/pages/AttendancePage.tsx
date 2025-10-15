@@ -129,7 +129,7 @@ export default function AttendancePage() {
 
       // Enforce a max of 2 attendance updates per registration
       const currentCount = registration.attendance_update_count || 0;
-      if (currentCount >= 2) {
+      if (currentCount >= 5) {
         setError('Attendance update limit reached for this team.');
         setSaving(false);
         return;
