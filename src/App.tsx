@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AdminProvider } from './contexts/AdminContext';
 import UserDashboard from './pages/UserDashboard';
 import EventDetail from './pages/EventDetail';
@@ -11,7 +11,7 @@ import AttendancePage from './pages/AttendancePage';
 function App() {
   return (
     <AdminProvider>
-      <BrowserRouter>
+  <HashRouter>
         <Routes>
           <Route path="/" element={<UserDashboard />} />
           <Route path="/event/:eventId" element={<EventDetail />} />
@@ -22,7 +22,7 @@ function App() {
           <Route path="/attendance/:regCode" element={<AttendancePage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </BrowserRouter>
+  </HashRouter>
     </AdminProvider>
   );
 }
