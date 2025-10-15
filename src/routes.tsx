@@ -13,7 +13,7 @@ export const router = createHashRouter([
     element: <UserDashboard />,
   },
   {
-    path: '/event/:eventId',
+    path: '/event/:eventId/:regCode?',
     element: <EventDetail />,
   },
   {

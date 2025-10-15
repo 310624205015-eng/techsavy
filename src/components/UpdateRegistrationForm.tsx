@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LoadingOverlay, type LoadingOverlayProps } from './LoadingOverlay';
+import { LoadingOverlay } from './LoadingOverlay';
 import { FormInput, Button } from './Form';
 import { syncManager } from '../lib/syncManager';
 

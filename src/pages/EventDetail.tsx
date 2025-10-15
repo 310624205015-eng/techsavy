@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { supabase, Event, ProblemStatement, Registration } from '../lib/supabase';
 import { useSheetSync } from '../hooks/useSheetSync';
 import { ArrowLeft, Users, Building2, Phone, CheckCircle, Loader2 } from 'lucide-react';
 
 export default function EventDetail() {
-  const { eventId } = useParams<{ eventId: string }>();
   const navigate = useNavigate();
-  const location = useLocation();
-  const regCode = new URLSearchParams(location.search).get('regCode');
+  const { eventId, regCode } = useParams<{ eventId: string; regCode?: string }>();
   const [event, setEvent] = useState<Event | null>(null);
   const [problemStatements, setProblemStatements] = useState<ProblemStatement[]>([]);
   const [existingRegistration, setExistingRegistration] = useState<Registration | null>(null);
@@ -62,7 +60,7 @@ export default function EventDetail() {
 
   // Effect to handle URL changes (including regCode changes)
   useEffect(() => {
-    console.log('URL parameters changed - eventId:', eventId, 'regCode:', regCode);
+  console.log('URL parameters changed - eventId:', eventId, 'regCode:', regCode);
     setLoading(true); // Ensure loading is set to true on parameter change
     setExistingRegistration(null); // Reset existing registration
     setFormData({ // Reset form data
@@ -110,7 +108,8 @@ export default function EventDetail() {
           // If this registration is for a different event, navigate to the correct event
           if (registration.event_id !== eventId) {
             console.log('Registration is for a different event, redirecting...');
-            navigate(`/events/${registration.event_id}?regCode=${regCode}`);
+            // Navigate to the correct event with regCode as a path segment
+            navigate(`/event/${registration.event_id}/${regCode}`);
             return;
           }
         }
@@ -228,9 +227,33 @@ export default function EventDetail() {
       setSuccess(true);
       // Update URL and clear local storage
       if (!regCode) {
-        const newUrl = new URL(window.location.href);
-        newUrl.searchParams.set('regCode', newRegCode);
-        window.history.replaceState({}, '', newUrl.toString());
+        // Replace the current URL to include the regCode as a path segment
+        try {
+          const current = new URL(window.location.href);
+          // If hash router is used, preserve hash and inject regCode into the path
+          if (window.location.hash && window.location.hash.startsWith('#')) {
+            const hashPath = window.location.hash.slice(1); // remove '#'
+            // If hash already contains event path, append regCode
+            if (/^\/event\/.+/.test(hashPath)) {
+              const parts = hashPath.split('/').filter(Boolean);
+              // Ensure path is /event/:eventId
+              if (parts.length >= 2) {
+                const newHash = `#/event/${parts[1]}/${newRegCode}`;
+                window.history.replaceState({}, '', `${current.origin}${current.pathname}${newHash}`);
+              }
+            } else {
+              // Default: append attendance route
+              const newHash = `#/attendance/${newRegCode}`;
+              window.history.replaceState({}, '', `${current.origin}${current.pathname}${newHash}`);
+            }
+          } else {
+            // No hash router present; update path directly
+            const newPath = `${current.origin}${current.pathname}event/${eventId}/${newRegCode}`;
+            window.history.replaceState({}, '', newPath);
+          }
+        } catch (e) {
+          console.error('Error updating URL with regCode path:', e);
+        }
       }
       localStorage.removeItem(`eventForm_${eventId}`);
     } catch (error) {
