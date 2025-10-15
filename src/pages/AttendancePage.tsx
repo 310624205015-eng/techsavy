@@ -23,6 +23,7 @@ interface Registration {
     title: string;
     description: string;
   }>;
+  attendance_update_count?: number;
 }
 
 interface MemberAttendance {
@@ -83,6 +84,8 @@ export default function AttendancePage() {
           problem_statements: reg.problem_statements || [],
           event_id: reg.event_id,
           problem_statement_id: reg.problem_statement_id
+          ,
+          attendance_update_count: (reg as any).attendance_update_count || 0
         };
 
         setRegistration(formattedReg);
@@ -122,6 +125,15 @@ export default function AttendancePage() {
     setSaving(true);
     try {
       const newState = !attendance[memberName];
+      const prevState = attendance[memberName];
+
+      // Enforce a max of 2 attendance updates per registration
+      const currentCount = registration.attendance_update_count || 0;
+      if (currentCount >= 2) {
+        setError('Attendance update limit reached for this team.');
+        setSaving(false);
+        return;
+      }
       
       // Upsert attendance record
       const { error } = await supabase
@@ -141,6 +153,40 @@ export default function AttendancePage() {
         ...prev,
         [memberName]: newState
       }));
+
+      // Try to increment the registration's attendance_update_count atomically (only if current matches)
+      const expected = registration.attendance_update_count || 0;
+      const { data: updData, error: updErr } = await supabase
+        .from('registrations')
+        .update({ attendance_update_count: expected + 1 })
+        .eq('id', registration.id)
+        .eq('attendance_update_count', expected)
+        .select('attendance_update_count')
+        .maybeSingle();
+
+      if (updErr) {
+        throw updErr;
+      }
+
+      if (!updData) {
+        // Another updater likely raced and changed the count / limit reached. Revert attendance change and show error.
+        await supabase.from('attendance').upsert({
+          registration_id: registration.id,
+          member_name: memberName,
+          is_present: prevState,
+          last_updated: new Date().toISOString()
+        }, { onConflict: 'registration_id,member_name' });
+
+        setAttendance(prev => ({ ...prev, [memberName]: prevState }));
+        // Refresh registration count
+        const { data: freshReg } = await supabase.from('registrations').select('attendance_update_count').eq('id', registration.id).maybeSingle();
+        if (freshReg) setRegistration({ ...registration, attendance_update_count: freshReg.attendance_update_count || 0 });
+        setError('Attendance update failed due to concurrent updates or limit reached.');
+        return;
+      }
+
+      // Update local registration count
+      setRegistration({ ...registration, attendance_update_count: updData.attendance_update_count || expected + 1 });
     } catch (err) {
       console.error('Error updating attendance:', err);
       setError('Failed to update attendance');
