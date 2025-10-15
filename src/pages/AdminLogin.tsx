@@ -87,7 +87,6 @@ export default function AdminLogin() {
 
           <div className="mt-6 pt-6 border-t border-gray-800 text-center">
             <p className="text-gray-500 text-sm">
-              Default credentials: admin / admin123
             </p>
           </div>
         </div>
